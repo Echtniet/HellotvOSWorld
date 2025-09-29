@@ -36,15 +36,24 @@ class DashboardRepository: DashboardRepositoryProtocol {
             ongoingTask?.cancel()
         }
 
-
         let task = Task {
             defer { ongoingTask = nil }
-            let dashboardDTO = try await apiService.fetchDashboard(for: name, lastname: lastname, forcedRefresh: forcedRefresh)
 
+            do {
+                guard !Task.isCancelled else {
+                    throw CancellationError()
+                }
+                let dashboardDTO = try await apiService.fetchDashboard(for: name, lastname: lastname, forcedRefresh: forcedRefresh)
 
-            let dashboard = Dashboard(dto: dashboardDTO)
-            await dataCache.set(dashboard)
-            return dashboard
+                let dashboard = Dashboard(dto: dashboardDTO)
+                await dataCache.set(dashboard)
+                return dashboard
+            } catch is CancellationError {
+                if let ongoingTask {
+                    return try await ongoingTask.value
+                }
+                throw CancellationError()
+            }
         }
         ongoingTask = task
         return try await task.value

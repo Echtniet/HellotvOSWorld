@@ -24,26 +24,35 @@ class APIService: APIServiceProtocol {
             return try await task.value
         }
 
-        Self.ongoingTask[key]?.cancel()
 
-        let task = Task { () -> DashboardDTO in
+        let newTask = Task { () -> DashboardDTO in
             defer { Self.ongoingTask[key] = nil }
-
             let urlString = baseURLString + "\(name)+\(lastname)"
-
             guard let url = URL(string: urlString) else {
                 throw URLError(.badURL)
             }
-
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let jsonObject = try JSONSerialization.jsonObject(with: data, options: [])
-            let prettyData = try JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted])
-            return try JSONDecoder().decode(DashboardDTO.self, from: data)
-
+            do {
+                guard !Task.isCancelled else {
+                    throw CancellationError()
+                }
+                let (data, _) = try await URLSession.shared.data(from: url)
+                return try JSONDecoder().decode(DashboardDTO.self, from: data)
+            } catch is CancellationError {
+                if let newTask = Self.ongoingTask[key] {
+                    return try await newTask.value
+                }
+                throw CancellationError()
+            }
         }
 
-        Self.ongoingTask[key] = task
-        return try await task.value
+
+        let oldTask = Self.ongoingTask[key]
+        Self.ongoingTask[key] = newTask
+
+        if forcedRefresh {
+            oldTask?.cancel()
+        }
+        return try await newTask.value
     }
 }
 
