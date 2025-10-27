@@ -33,9 +33,8 @@ struct DashboardView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 40) {
                         ForEach(dashboard.widgets, id: \.self) { widget in
-                            EquatableView(content:
-                                DashboardCard(model: widget)
-                            )
+                            DashboardCard(model: widget)
+                            .equatable()
                             .scaleEffect(focusedID == widget.id ? 1.05 : 1.0)
                             .animation(.easeInOut(duration: 0.2), value: focusedID)
                             .focusable()

@@ -7,6 +7,27 @@
 
 import Foundation
 
+enum APIVersion: String {
+    case apiServiceV1
+    case apiServiceV2
+}
+
+actor TaskCache {
+    private var cache: [String: Any] = [:]
+
+    func get<T>(for key: String) -> Task<T, Error>? {
+        cache[key] as? Task<T, Error>
+    }
+
+    func set<T>(_ task: Task<T, Error>?, for key: String) {
+        cache[key] = task
+    }
+
+    func remove(for key: String) {
+        cache[key] = nil
+    }
+}
+
 protocol APIServiceProtocol {
     func fetchDashboard(for name: String, lastname: String, forcedRefresh: Bool) async throws -> DashboardDTO
 }
@@ -14,45 +35,51 @@ protocol APIServiceProtocol {
 class APIService: APIServiceProtocol {
     private var baseURLString = "https://collector-demo.superyachtapi.com/resources/dashboard?name="
 
-    private static var ongoingTask: [String: Task<DashboardDTO, Error>] = [:]
+    private let taskCache: TaskCache
 
-    func fetchDashboard(for name: String, lastname: String, forcedRefresh: Bool) async throws -> DashboardDTO {
+    init(taskCache: TaskCache) {
+        self.taskCache = taskCache
+    }
 
-        let key = "dashboard"
-
-        if let task = Self.ongoingTask[key], !forcedRefresh {
-            return try await task.value
+    private func request<T: Codable>(url: URL, cacheKey: String, forcedRefresh: Bool = false) async throws -> T {
+        if let exsistingTask: Task<T, Error> = await taskCache.get(for: cacheKey), !forcedRefresh {
+            return try await exsistingTask.value
         }
 
-
-        let newTask = Task { () -> DashboardDTO in
-            defer { Self.ongoingTask[key] = nil }
-            let urlString = baseURLString + "\(name)+\(lastname)"
-            guard let url = URL(string: urlString) else {
-                throw URLError(.badURL)
-            }
+        let newTask = Task { () -> T in
+            defer { Task { await taskCache.remove(for: cacheKey) } }
             do {
                 guard !Task.isCancelled else {
                     throw CancellationError()
                 }
                 let (data, _) = try await URLSession.shared.data(from: url)
-                return try JSONDecoder().decode(DashboardDTO.self, from: data)
+                return try JSONDecoder().decode(T.self, from: data)
             } catch is CancellationError {
-                if let newTask = Self.ongoingTask[key] {
-                    return try await newTask.value
+                if let retryTask: Task<T, Error> = await taskCache.get(for: cacheKey) {
+                    return try await retryTask.value
                 }
                 throw CancellationError()
             }
         }
 
+        let oldTask: Task<T, Error>? = await taskCache.get(for: cacheKey)
+        await taskCache.set(newTask, for: cacheKey)
 
-        let oldTask = Self.ongoingTask[key]
-        Self.ongoingTask[key] = newTask
+        if forcedRefresh { oldTask?.cancel() }
 
-        if forcedRefresh {
-            oldTask?.cancel()
-        }
         return try await newTask.value
+    }
+
+    func fetchDashboard(for name: String, lastname: String, forcedRefresh: Bool) async throws -> DashboardDTO {
+
+        let key = "dashboard"
+
+        let urlString = baseURLString + "\(name)+\(lastname)"
+        guard let url = URL(string: urlString) else {
+            throw URLError(.badURL)
+        }
+
+        return try await request(url: url, cacheKey: key, forcedRefresh: forcedRefresh)
     }
 }
 
@@ -178,5 +205,3 @@ class MockAPIService: APIServiceProtocol {
         )
     }
 }
-
-

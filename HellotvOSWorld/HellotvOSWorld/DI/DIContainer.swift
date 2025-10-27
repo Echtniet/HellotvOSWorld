@@ -7,7 +7,6 @@
 
 import Swinject
 
-@MainActor
 class DIContainer {
     static let shared = DIContainer()
     let container: Container
@@ -25,12 +24,20 @@ class DIContainer {
     private func registerServices() {
         #if DEBUG
         //TODO: make mock container for consisten data
-        container.register(APIServiceProtocol.self) { _ in
+        container.register(APIServiceProtocol.self, name: APIVersion.apiServiceV1.rawValue) { _ in
+            MockAPIService()
+        }
+        .inObjectScope(.weak)
+        container.register(APIServiceProtocol.self, name: APIVersion.apiServiceV2.rawValue) { _ in
             MockAPIService()
         }
         .inObjectScope(.weak)
         #else
-        container.register(APIServiceProtocol.self) { _ in
+        container.register(APIServiceProtocol.self,  name: APIVersion.apiServiceV1.rawValue) { _ in
+            APIService()
+        }
+        .inObjectScope(.weak)
+        container.register(APIServiceProtocol.self,  name: APIVersion.apiServiceV2.rawValue) { _ in
             APIService()
         }
         .inObjectScope(.weak)
@@ -52,7 +59,7 @@ class DIContainer {
     private func registerRepositories() {
         container.register(DashboardRepositoryProtocol.self) { resolver in
             DashboardRepository(
-                apiService: resolver.resolve(APIServiceProtocol.self)!,
+                apiService: resolver.resolve(APIServiceProtocol.self, name: APIVersion.apiServiceV2.rawValue)!,
                 dataCache: resolver.resolve(DataCache.self)!
             )
         }

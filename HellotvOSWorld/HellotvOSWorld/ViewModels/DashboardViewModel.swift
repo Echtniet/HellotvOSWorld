@@ -10,7 +10,6 @@ import Foundation
 import Observation
 
 @Observable
-@MainActor
 class DashboardViewModel {
     var dashboard: Dashboard?
 
@@ -30,23 +29,34 @@ class DashboardViewModel {
     }
 
     func fetchDashboard(forcedRefersh: Bool = false) {
+        print("Log: Fetching dashboard")
         fetchDashboardTask?.cancel()
-        fetchDashboardTask = Task {
-            if firstLoad {
-                isLoading = true
-                firstLoad = false
+        fetchDashboardTask = Task(priority: .userInitiated) {
+            await MainActor.run {
+                if firstLoad {
+                    isLoading = true
+                    firstLoad = false
+                }
+                errorMessage = nil
             }
-            errorMessage = nil
+
+            defer { Task { await MainActor.run { isLoading = false } } }
 
             do {
                 guard !Task.isCancelled else { return }
-                dashboard = try await dashboardUseCase.execute(for: "Clinton", lastname: "Davelaar", forcedRefresh: forcedRefersh)
+                let result = try await dashboardUseCase.execute(for: "Clinton", lastname: "Davelaar", forcedRefresh: forcedRefersh)
+
+                await MainActor.run {
+                    print("dashboard updated")
+                    dashboard = result
+                }
             } catch is CancellationError {
                 print("Log: Cancelled fetch dashboard task")
             } catch {
-                errorMessage = "Error: \(error.localizedDescription)"
+                await MainActor.run {
+                    errorMessage = "Error: \(error.localizedDescription)"
+                }
             }
-            isLoading = false
         }
     }
 
@@ -55,7 +65,7 @@ class DashboardViewModel {
         timerTask = Task {
             while !Task.isCancelled {
                 fetchDashboard()
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
             }
         }
     }
@@ -64,3 +74,75 @@ class DashboardViewModel {
         timerTask?.cancel()
     }
 }
+
+//final class DashboardViewModel: ObservableObject {
+//    @Published var dashboard: Dashboard?
+//    @Published var isLoading: Bool = false
+//    @Published var errorMessage: String?
+//
+//    private var firstLoad: Bool = true
+//    private let dashboardUseCase: DashboardUseCaseProtocol
+//    private var fetchDashboardTask: Task<Void, Never>?
+//    private var timerTask: Task<Void, Never>?
+//    private var cancellables = Set<AnyCancellable>()
+//
+//    init(dashboardUseCase: DashboardUseCaseProtocol) {
+//        self.dashboardUseCase = dashboardUseCase
+//    }
+//
+//    func fetchDashboard(forcedRefersh: Bool = false) {
+//        print("Log: Fetching dashboard")
+//        fetchDashboardTask?.cancel()
+//        fetchDashboardTask = Task(priority: .userInitiated) {
+//            await MainActor.run {
+//                if self.firstLoad {
+//                    self.isLoading = true
+//                    self.firstLoad = false
+//                }
+//                self.errorMessage = nil
+//            }
+//
+//            defer {
+//                Task { @MainActor in
+//                    self.isLoading = false
+//                }
+//            }
+//
+//            do {
+//                guard !Task.isCancelled else { return }
+//
+//                let result = try await self.dashboardUseCase.execute(
+//                    for: "Clinton",
+//                    lastname: "Davelaar",
+//                    forcedRefresh: forcedRefersh
+//                )
+//
+//                await MainActor.run {
+//                    print("dashboard updated")
+//                    self.dashboard = result
+//                }
+//
+//            } catch is CancellationError {
+//                print("Log: Cancelled fetch dashboard task")
+//            } catch {
+//                await MainActor.run {
+//                    self.errorMessage = "Error: \(error.localizedDescription)"
+//                }
+//            }
+//        }
+//    }
+//
+//    func startAutoRefresh() {
+//        timerTask?.cancel()
+//        timerTask = Task {
+//            while !Task.isCancelled {
+//                fetchDashboard()
+//                try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
+//            }
+//        }
+//    }
+//
+//    func stopAutoRefresh() {
+//        timerTask?.cancel()
+//    }
+//}
